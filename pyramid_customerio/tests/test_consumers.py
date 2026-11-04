@@ -211,3 +211,22 @@ def test_consumer_protocol() -> None:
     # Test flush method
     consumer.flush()
     assert consumer.flushed is True
+
+
+@mock.patch("customerio.CustomerIO")
+def test_BufferedConsumer_object(mock_cio: mock.MagicMock) -> None:
+    """Test that BufferedConsumer sends object operations through the batch API."""
+    mock_client = mock.MagicMock()
+    consumer = BufferedConsumer(mock_client)
+
+    operation = {
+        "type": "object",
+        "identifiers": {"object_type_id": "1", "object_id": "acme"},
+        "action": "identify",
+        "attributes": {"name": "Acme Inc."},
+    }
+    consumer.send(endpoint=Endpoint.entity, msg=operation)
+    consumer.flush()
+
+    mock_client.batch.assert_called_once_with([operation])
+    assert len(consumer.messages) == 0

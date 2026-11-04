@@ -71,6 +71,48 @@ def my_view(request):
     })
 ```
 
+## Objects
+
+Customer.io [Objects](https://docs.customer.io/journeys/objects/) are non-person entities, such as companies or accounts, that people relate to. Declare your object types and the properties allowed on them, then identify objects and relate people to them the same way you identify people:
+
+```python
+from dataclasses import dataclass
+from pyramid_customerio import ObjectProperties
+from pyramid_customerio import ObjectType
+from pyramid_customerio import ObjectTypes
+from pyramid_customerio import Property
+from pyramid_customerio import RelationshipProperties
+
+
+@dataclass(frozen=True)
+class MyObjectTypes(ObjectTypes):
+    # The id comes from your workspace's Objects settings
+    company: ObjectType = ObjectType("1")
+
+
+@dataclass(frozen=True)
+class MyRelationshipProperties(RelationshipProperties):
+    role: Property = Property("role")
+
+
+def my_view(request):
+    request.customerio.identify_object(
+        request.customerio.object_types.company,
+        "acme",
+        {request.customerio.object_properties.name: "Acme Inc."},
+        relationships={
+            request.user.distinct_id: {
+                request.customerio.relationship_properties.role: "admin"
+            }
+        },
+    )
+```
+
+```ini
+customerio.object_types = myapp.customerio.MyObjectTypes
+customerio.relationship_properties = myapp.customerio.MyRelationshipProperties
+```
+
 ## Development
 
 This project uses Nix for development environment management and Poetry for Python dependency management.
