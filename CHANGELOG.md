@@ -1,5 +1,14 @@
 ## Changelog
 
+1.1.0 (unreleased)
+-----------
+
+* Add support for Customer.io Objects: `identify_object`, `delete_object` and
+  `delete_object_relationships` on `request.customerio`, configured through
+  the `customerio.object_types`, `customerio.object_properties` and
+  `customerio.relationship_properties` settings.
+  [zupo]
+
 1.0.0
 -----------
 

@@ -14,6 +14,9 @@ class Endpoint(StrEnum):
 
     track = auto()
     identify = auto()
+    # Objects go to the v2 entity API through its batch call, since the
+    # customerio package has no single-entity method
+    entity = auto()
 
 
 class Consumer(Protocol):
@@ -98,6 +101,9 @@ class BufferedConsumer:
                     # Extract customer_id and attributes
                     customer_id = msg.pop("id")
                     self.client.identify(id=customer_id, **msg)
+                elif endpoint == Endpoint.entity:
+                    # The message is a ready-made Track API v2 operation
+                    self.client.batch([msg])
             except Exception:
                 if self.use_structlog:
                     import structlog

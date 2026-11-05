@@ -141,8 +141,64 @@ class ProfileMetaProperties:
     ignore_alias: Property = Property("ignore_alias")
 
 
+@dataclass(frozen=True)
+class ObjectType:
+    """A kind of non-person entity, such as a company, an account or a course.
+
+    People relate to objects, and Customer.io can then segment people by the
+    objects they belong to, or message everyone related to one object.
+    """
+
+    # Customer.io's numeric id of the object type, shown in the workspace's
+    # Objects settings. Object types are numbered per workspace.
+    type_id: str
+
+    # Optional list of properties that are allowed on objects of this type
+    properties: t.Optional[t.List[Property]] = None
+
+
+@dataclass(frozen=True)
+class ObjectTypes:
+    """Let's be precise which object types we will send.
+
+    Customer.io numbers object types per workspace, so there are no defaults
+    here. Provide your own list via the `customerio.object_types` setting.
+    """
+
+
+@dataclass(frozen=True)
+class ObjectProperties:
+    """Let's be precise which properties we will set on Objects.
+
+    Same reasoning as for ProfileProperties: a single list of allowed
+    properties keeps object attributes consistent across the codebase. You
+    can provide your own list via the `customerio.object_properties` setting.
+    """
+
+    # The time when the object was created.
+    created_at: Property = Property("created_at")
+
+    # The object's display name, e.g. "Acme Inc.".
+    name: Property = Property("name")
+
+
+@dataclass(frozen=True)
+class RelationshipProperties:
+    """Let's be precise which properties we will set on Relationships.
+
+    A relationship links a person to an object, and can carry its own
+    properties, such as the person's role in a company. There are no defaults
+    here. Provide your own list via the `customerio.relationship_properties`
+    setting.
+    """
+
+
 # Type alias to make passing dicts of properties easier
 PropertiesType = t.Dict[Property, t.Any]
+
+# Type alias for relating people to an object: a person's distinct_id mapped
+# to the properties stored on the relationship (an empty dict for none)
+RelationshipsType = t.Dict[str, PropertiesType]
 
 
 def includeme(config: Configurator) -> None:

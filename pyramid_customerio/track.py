@@ -7,9 +7,20 @@ from pyramid.request import Request
 from pyramid.response import Response
 from pyramid.settings import asbool
 from pyramid_customerio import Event
+from pyramid_customerio import EventProperties
+from pyramid_customerio import Events
+from pyramid_customerio import ObjectProperties
+from pyramid_customerio import ObjectType
+from pyramid_customerio import ObjectTypes
+from pyramid_customerio import ProfileMetaProperties
+from pyramid_customerio import ProfileProperties
 from pyramid_customerio import PropertiesType
+from pyramid_customerio import RelationshipProperties
+from pyramid_customerio import RelationshipsType
+from pyramid_customerio.consumer import BufferedConsumer
 from pyramid_customerio.consumer import Consumer
 from pyramid_customerio.consumer import Endpoint
+from pyramid_customerio.consumer import MockedConsumer
 
 import typing as t
 
@@ -46,12 +57,8 @@ class CustomerIOTrack:
             if not consumer.startswith("."):
                 consumer = self._resolve_class(consumer)()
             elif consumer == ".consumer.MockedConsumer":
-                from pyramid_customerio.consumer import MockedConsumer
-
                 consumer = MockedConsumer()
             elif consumer == ".consumer.BufferedConsumer":
-                from pyramid_customerio.consumer import BufferedConsumer
-
                 # Initialize Customer.io client
                 try:
                     from customerio import CustomerIO
@@ -68,8 +75,6 @@ class CustomerIOTrack:
 
                 if not site_id or not api_key:
                     # Fall back to MockedConsumer if credentials are missing
-                    from pyramid_customerio.consumer import MockedConsumer
-
                     consumer = MockedConsumer()
                 else:
                     # Convert string region to Regions enum
@@ -99,8 +104,6 @@ class CustomerIOTrack:
             if not events.startswith("."):
                 self.events = self._resolve_class(events)()
             elif events == ".Events":
-                from pyramid_customerio import Events
-
                 self.events = Events()
             else:
                 raise ValueError(f"Unknown events: {events}")
@@ -115,8 +118,6 @@ class CustomerIOTrack:
             if not event_properties.startswith("."):
                 self.event_properties = self._resolve_class(event_properties)()
             elif event_properties == ".EventProperties":
-                from pyramid_customerio import EventProperties
-
                 self.event_properties = EventProperties()
             else:
                 raise ValueError(f"Unknown event_properties: {event_properties}")
@@ -131,8 +132,6 @@ class CustomerIOTrack:
             if not profile_properties.startswith("."):
                 self.profile_properties = self._resolve_class(profile_properties)()
             elif profile_properties == ".ProfileProperties":
-                from pyramid_customerio import ProfileProperties
-
                 self.profile_properties = ProfileProperties()
             else:
                 raise ValueError(f"Unknown profile_properties: {profile_properties}")
@@ -149,8 +148,6 @@ class CustomerIOTrack:
                     profile_meta_properties
                 )()
             elif profile_meta_properties == ".ProfileMetaProperties":
-                from pyramid_customerio import ProfileMetaProperties
-
                 self.profile_meta_properties = ProfileMetaProperties()
             else:
                 raise ValueError(
@@ -158,6 +155,50 @@ class CustomerIOTrack:
                 )
         else:
             self.profile_meta_properties = profile_meta_properties
+
+        # Object types
+        object_types = settings.get("customerio.object_types", ".ObjectTypes")
+        if isinstance(object_types, str):
+            if not object_types.startswith("."):
+                self.object_types = self._resolve_class(object_types)()
+            elif object_types == ".ObjectTypes":
+                self.object_types = ObjectTypes()
+            else:
+                raise ValueError(f"Unknown object_types: {object_types}")
+        else:
+            self.object_types = object_types
+
+        # Object properties
+        object_properties = settings.get(
+            "customerio.object_properties", ".ObjectProperties"
+        )
+        if isinstance(object_properties, str):
+            if not object_properties.startswith("."):
+                self.object_properties = self._resolve_class(object_properties)()
+            elif object_properties == ".ObjectProperties":
+                self.object_properties = ObjectProperties()
+            else:
+                raise ValueError(f"Unknown object_properties: {object_properties}")
+        else:
+            self.object_properties = object_properties
+
+        # Relationship properties
+        relationship_properties = settings.get(
+            "customerio.relationship_properties", ".RelationshipProperties"
+        )
+        if isinstance(relationship_properties, str):
+            if not relationship_properties.startswith("."):
+                self.relationship_properties = self._resolve_class(
+                    relationship_properties
+                )()
+            elif relationship_properties == ".RelationshipProperties":
+                self.relationship_properties = RelationshipProperties()
+            else:
+                raise ValueError(
+                    f"Unknown relationship_properties: {relationship_properties}"
+                )
+        else:
+            self.relationship_properties = relationship_properties
 
         # Distinct ID
         self.distinct_id = distinct_id
@@ -198,19 +239,11 @@ class CustomerIOTrack:
                         f"Property '{prop}' must be a member of Event.properties"
                     )
 
-        # Format dates for Customer.io (unix timestamp)
-        formatted_props = {}
-        for prop, value in props.items():
-            if isinstance(value, datetime):
-                formatted_props[prop.name] = round(value.timestamp())
-            else:
-                formatted_props[prop.name] = value
-
         # Send to Customer.io
         msg = {
             "id": self.distinct_id,
             "name": event.name,
-            **formatted_props,
+            **_format_properties(props),
         }
         self.consumer.send(Endpoint.track, msg)
 
@@ -242,13 +275,7 @@ class CustomerIOTrack:
                     f"Property '{prop.name}' is not a member of self.profile_meta_properties"
                 )
 
-        # Format properties for Customer.io
-        formatted_props = {}
-        for prop, value in props.items():
-            if isinstance(value, datetime):
-                formatted_props[prop.name] = round(value.timestamp())
-            else:
-                formatted_props[prop.name] = value
+        formatted_props = _format_properties(props)
 
         # Merge in meta properties
         for prop, value in meta.items():
@@ -260,6 +287,134 @@ class CustomerIOTrack:
             **formatted_props,
         }
         self.consumer.send(Endpoint.identify, msg)
+
+    def _validate_object_type(self, object_type: ObjectType) -> None:
+        """Raise if the object type is not one of self.object_types."""
+        if object_type not in self.object_types.__dict__.values():
+            raise ValueError(
+                f"Object type '{object_type.type_id}' must be a member of self.object_types"
+            )
+
+    def _format_relationships(
+        self, relationships: RelationshipsType
+    ) -> t.List[t.Dict[str, t.Any]]:
+        """Validate and format people's relationships to an object."""
+        formatted = []
+        for distinct_id, props in relationships.items():
+            for prop in props:
+                if prop not in self.relationship_properties.__dict__.values():
+                    raise ValueError(
+                        f"Property '{prop.name}' is not a member of "
+                        "self.relationship_properties"
+                    )
+            relationship: t.Dict[str, t.Any] = {"identifiers": {"id": distinct_id}}
+            if props:
+                relationship["relationship_attributes"] = _format_properties(props)
+            formatted.append(relationship)
+        return formatted
+
+    def identify_object(
+        self,
+        object_type: ObjectType,
+        object_id: str,
+        props: PropertiesType,
+        relationships: t.Optional[RelationshipsType] = None,
+    ) -> None:
+        """Create or update an object in Customer.io, and relate people to it.
+
+        Args:
+            object_type: ObjectType object defining the kind of object
+            object_id: Your identifier of the object, e.g. a company's id
+            props: Dict of ObjectProperty->value mappings
+            relationships: Optional dict of distinct_id->RelationshipProperty
+                mappings; people listed here are related to the object,
+                people not listed keep whatever relationship they had
+        """
+        self._validate_object_type(object_type)
+
+        # Validate properties
+        for prop in props:
+            if prop not in self.object_properties.__dict__.values():
+                raise ValueError(
+                    f"Property '{prop.name}' is not a member of self.object_properties"
+                )
+
+        # If object type has specific allowed properties, validate against those
+        if object_type.properties:
+            for prop in props:
+                if prop not in object_type.properties:
+                    raise ValueError(
+                        f"Property '{prop}' must be a member of ObjectType.properties"
+                    )
+
+        # Send to Customer.io
+        msg: t.Dict[str, t.Any] = {
+            "type": "object",
+            "identifiers": {
+                "object_type_id": object_type.type_id,
+                "object_id": object_id,
+            },
+            "action": "identify",
+            "attributes": _format_properties(props),
+        }
+        if relationships:
+            msg["cio_relationships"] = self._format_relationships(relationships)
+        self.consumer.send(Endpoint.entity, msg)
+
+    def delete_object(self, object_type: ObjectType, object_id: str) -> None:
+        """Delete an object from Customer.io, along with its relationships.
+
+        Args:
+            object_type: ObjectType object defining the kind of object
+            object_id: Your identifier of the object, e.g. a company's id
+        """
+        self._validate_object_type(object_type)
+
+        msg = {
+            "type": "object",
+            "identifiers": {
+                "object_type_id": object_type.type_id,
+                "object_id": object_id,
+            },
+            "action": "delete",
+        }
+        self.consumer.send(Endpoint.entity, msg)
+
+    def delete_object_relationships(
+        self, object_type: ObjectType, object_id: str, distinct_ids: t.List[str]
+    ) -> None:
+        """Unrelate people from an object in Customer.io.
+
+        Args:
+            object_type: ObjectType object defining the kind of object
+            object_id: Your identifier of the object, e.g. a company's id
+            distinct_ids: The people to unrelate from the object
+        """
+        self._validate_object_type(object_type)
+
+        msg = {
+            "type": "object",
+            "identifiers": {
+                "object_type_id": object_type.type_id,
+                "object_id": object_id,
+            },
+            "action": "delete_relationships",
+            "cio_relationships": [
+                {"identifiers": {"id": distinct_id}} for distinct_id in distinct_ids
+            ],
+        }
+        self.consumer.send(Endpoint.entity, msg)
+
+
+def _format_properties(props: PropertiesType) -> t.Dict[str, t.Any]:
+    """Format properties for Customer.io, with dates as unix timestamps."""
+    formatted = {}
+    for prop, value in props.items():
+        if isinstance(value, datetime):
+            formatted[prop.name] = round(value.timestamp())
+        else:
+            formatted[prop.name] = value
+    return formatted
 
 
 def customerio_init(request: Request) -> CustomerIOTrack:

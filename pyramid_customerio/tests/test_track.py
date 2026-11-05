@@ -2,13 +2,18 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timezone
 from freezegun import freeze_time
 from pyramid_customerio import Event
 from pyramid_customerio import EventProperties
 from pyramid_customerio import Events
+from pyramid_customerio import ObjectProperties
+from pyramid_customerio import ObjectType
+from pyramid_customerio import ObjectTypes
 from pyramid_customerio import ProfileMetaProperties
 from pyramid_customerio import ProfileProperties
 from pyramid_customerio import Property
+from pyramid_customerio import RelationshipProperties
 from pyramid_customerio.consumer import BufferedConsumer
 from pyramid_customerio.consumer import Endpoint
 from pyramid_customerio.consumer import MockedConsumer
@@ -16,6 +21,7 @@ from pyramid_customerio.track import CustomerIOTrack
 from unittest import mock
 
 import pytest
+import typing as t
 
 
 def test_customerio_init_distinct_id() -> None:
@@ -582,3 +588,306 @@ def test_flush_callback_no_customerio() -> None:
     flush_callback(request, response)
 
     # Should not raise an error
+
+
+@dataclass(frozen=True)
+class FooObjectProperties(ObjectProperties):
+    plan: Property = Property("plan")
+
+
+@dataclass(frozen=True)
+class FooRelationshipProperties(RelationshipProperties):
+    role: Property = Property("role")
+
+
+@dataclass(frozen=True)
+class FooObjectTypes(ObjectTypes):
+    company: ObjectType = ObjectType("1")
+    team: ObjectType = ObjectType("2", properties=[ObjectProperties.name])
+
+
+OBJECT_SETTINGS = {
+    "customerio.object_types": "pyramid_customerio.tests.test_track.FooObjectTypes",
+    "customerio.object_properties": "pyramid_customerio.tests.test_track.FooObjectProperties",
+    "customerio.relationship_properties": "pyramid_customerio.tests.test_track.FooRelationshipProperties",
+}
+
+
+def test_init_object_types() -> None:
+    """Test initialization of ObjectTypes."""
+
+    # default object types
+    customerio = CustomerIOTrack(settings={})
+    assert isinstance(customerio.object_types, ObjectTypes)
+
+    # resolved from a dotted-name
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    assert isinstance(customerio.object_types, FooObjectTypes)
+
+
+def test_init_object_properties() -> None:
+    """Test initialization of ObjectProperties."""
+
+    # default object properties
+    customerio = CustomerIOTrack(settings={})
+    assert isinstance(customerio.object_properties, ObjectProperties)
+
+    # resolved from a dotted-name
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    assert isinstance(customerio.object_properties, FooObjectProperties)
+
+
+def test_init_relationship_properties() -> None:
+    """Test initialization of RelationshipProperties."""
+
+    # default relationship properties
+    customerio = CustomerIOTrack(settings={})
+    assert isinstance(customerio.relationship_properties, RelationshipProperties)
+
+    # resolved from a dotted-name
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    assert isinstance(customerio.relationship_properties, FooRelationshipProperties)
+
+
+def test_init_unknown_object_types() -> None:
+    """Test initialization with unknown object types."""
+    with pytest.raises(ValueError, match="Unknown object_types: .UnknownObjectTypes"):
+        CustomerIOTrack(settings={"customerio.object_types": ".UnknownObjectTypes"})
+
+
+def test_init_unknown_object_properties() -> None:
+    """Test initialization with unknown object properties."""
+    with pytest.raises(
+        ValueError, match="Unknown object_properties: .UnknownObjectProperties"
+    ):
+        CustomerIOTrack(
+            settings={"customerio.object_properties": ".UnknownObjectProperties"}
+        )
+
+
+def test_init_unknown_relationship_properties() -> None:
+    """Test initialization with unknown relationship properties."""
+    with pytest.raises(
+        ValueError,
+        match="Unknown relationship_properties: .UnknownRelationshipProperties",
+    ):
+        CustomerIOTrack(
+            settings={
+                "customerio.relationship_properties": ".UnknownRelationshipProperties"
+            }
+        )
+
+
+def test_init_with_object_instances_for_objects() -> None:
+    """Test initialization with object instances for the object settings."""
+    object_types = FooObjectTypes()
+    object_properties = FooObjectProperties()
+    relationship_properties = FooRelationshipProperties()
+
+    customerio = CustomerIOTrack(
+        settings={
+            "customerio.object_types": object_types,
+            "customerio.object_properties": object_properties,
+            "customerio.relationship_properties": relationship_properties,
+        }
+    )
+
+    assert customerio.object_types is object_types
+    assert customerio.object_properties is object_properties
+    assert customerio.relationship_properties is relationship_properties
+
+
+def test_identify_object() -> None:
+    """Test creating or updating an object, with dates as timestamps."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+    object_properties = t.cast(FooObjectProperties, customerio.object_properties)
+
+    customerio.identify_object(
+        object_types.company,
+        "acme",
+        {
+            object_properties.name: "Acme Inc.",
+            object_properties.created_at: datetime(2019, 1, 1, tzinfo=timezone.utc),
+            object_properties.plan: "pro",
+        },
+    )
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert consumer.mocked_messages == [
+        {
+            "endpoint": Endpoint.entity,
+            "msg": {
+                "type": "object",
+                "identifiers": {"object_type_id": "1", "object_id": "acme"},
+                "action": "identify",
+                "attributes": {
+                    "name": "Acme Inc.",
+                    "created_at": 1546300800,
+                    "plan": "pro",
+                },
+            },
+        }
+    ]
+
+
+def test_identify_object_with_relationships() -> None:
+    """Test relating people to an object, with and without properties."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+    object_properties = t.cast(FooObjectProperties, customerio.object_properties)
+    relationship_properties = t.cast(
+        FooRelationshipProperties, customerio.relationship_properties
+    )
+
+    customerio.identify_object(
+        object_types.company,
+        "acme",
+        {object_properties.name: "Acme Inc."},
+        relationships={
+            "user-1": {relationship_properties.role: "admin"},
+            "user-2": {},
+        },
+    )
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert consumer.mocked_messages == [
+        {
+            "endpoint": Endpoint.entity,
+            "msg": {
+                "type": "object",
+                "identifiers": {"object_type_id": "1", "object_id": "acme"},
+                "action": "identify",
+                "attributes": {"name": "Acme Inc."},
+                "cio_relationships": [
+                    {
+                        "identifiers": {"id": "user-1"},
+                        "relationship_attributes": {"role": "admin"},
+                    },
+                    {"identifiers": {"id": "user-2"}},
+                ],
+            },
+        }
+    ]
+
+
+def test_identify_object_validation() -> None:
+    """Test identify_object rejects unknown types and properties."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+    object_properties = t.cast(FooObjectProperties, customerio.object_properties)
+
+    # unknown object type
+    with pytest.raises(
+        ValueError, match="Object type '9' must be a member of self.object_types"
+    ):
+        customerio.identify_object(ObjectType("9"), "acme", {})
+
+    # unknown object property
+    with pytest.raises(
+        ValueError, match="Property 'foo' is not a member of self.object_properties"
+    ):
+        customerio.identify_object(
+            object_types.company, "acme", {Property("foo"): "bar"}
+        )
+
+    # property not allowed on this object type
+    with pytest.raises(
+        ValueError,
+        match="must be a member of ObjectType.properties",
+    ):
+        customerio.identify_object(
+            object_types.team, "devs", {object_properties.plan: "pro"}
+        )
+
+    # unknown relationship property
+    with pytest.raises(
+        ValueError,
+        match="Property 'foo' is not a member of self.relationship_properties",
+    ):
+        customerio.identify_object(
+            object_types.company,
+            "acme",
+            {},
+            relationships={"user-1": {Property("foo"): "bar"}},
+        )
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert consumer.mocked_messages == []
+
+
+def test_identify_object_does_not_require_distinct_id() -> None:
+    """Objects are not tied to the current user, so no distinct_id is needed."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS, distinct_id=None)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+
+    customerio.identify_object(object_types.company, "acme", {})
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert len(consumer.mocked_messages) == 1
+
+
+def test_delete_object() -> None:
+    """Test deleting an object."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+
+    customerio.delete_object(object_types.company, "acme")
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert consumer.mocked_messages == [
+        {
+            "endpoint": Endpoint.entity,
+            "msg": {
+                "type": "object",
+                "identifiers": {"object_type_id": "1", "object_id": "acme"},
+                "action": "delete",
+            },
+        }
+    ]
+
+    with pytest.raises(ValueError, match="must be a member of self.object_types"):
+        customerio.delete_object(ObjectType("9"), "acme")
+
+
+def test_delete_object_relationships() -> None:
+    """Test unrelating people from an object."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+
+    customerio.delete_object_relationships(
+        object_types.company, "acme", ["user-1", "user-2"]
+    )
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert consumer.mocked_messages == [
+        {
+            "endpoint": Endpoint.entity,
+            "msg": {
+                "type": "object",
+                "identifiers": {"object_type_id": "1", "object_id": "acme"},
+                "action": "delete_relationships",
+                "cio_relationships": [
+                    {"identifiers": {"id": "user-1"}},
+                    {"identifiers": {"id": "user-2"}},
+                ],
+            },
+        }
+    ]
+
+    with pytest.raises(ValueError, match="must be a member of self.object_types"):
+        customerio.delete_object_relationships(ObjectType("9"), "acme", ["user-1"])
+
+
+def test_identify_object_with_restricted_properties() -> None:
+    """Test identify_object accepts a property the object type allows."""
+    customerio = CustomerIOTrack(settings=OBJECT_SETTINGS)
+    object_types = t.cast(FooObjectTypes, customerio.object_types)
+    object_properties = t.cast(FooObjectProperties, customerio.object_properties)
+
+    customerio.identify_object(
+        object_types.team, "devs", {object_properties.name: "Developers"}
+    )
+
+    consumer = t.cast(MockedConsumer, customerio.consumer)
+    assert consumer.mocked_messages[0]["msg"]["attributes"] == {"name": "Developers"}
