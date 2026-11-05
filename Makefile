@@ -63,8 +63,17 @@ unit: .installed
 .PHONY: test
 test: tests
 
+.PHONY: build
+build: .installed
+	@rm -rf dist
+	@poetry build
+	@poetry run twine check dist/*
+	@smoke=$$(mktemp -d) && python3 -m venv $$smoke \
+		&& $$smoke/bin/pip install -q "setuptools<82" dist/*.whl \
+		&& $$smoke/bin/python scripts/smoke_wheel.py
+
 .PHONY: tests
-tests: format lint types unit
+tests: format lint types unit build
 
 .PHONY: clean
 clean:

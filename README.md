@@ -113,6 +113,10 @@ customerio.object_types = myapp.customerio.MyObjectTypes
 customerio.relationship_properties = myapp.customerio.MyRelationshipProperties
 ```
 
+## Releasing
+
+Release instructions are in [RELEASING.md](RELEASING.md).
+
 ## Development
 
 This project uses Nix for development environment management and Poetry for Python dependency management.
