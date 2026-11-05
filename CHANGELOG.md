@@ -1,6 +1,6 @@
 ## Changelog
 
-1.1.0 (unreleased)
+1.1.0 (2026-11-05)
 -----------
 
 * Add support for Customer.io Objects: `identify_object`, `delete_object` and
