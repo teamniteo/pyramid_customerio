@@ -157,6 +157,10 @@ make types
 make format
 ```
 
+### GitHub Actions versions
+
+The `uses:` lines in `.github/workflows/` carry version tags. `.github/workflows/actions.lock` holds the commit each tag points to. Never edit it by hand: run `gh-actions-lock` (available in the nix-shell) after any change to a `uses:` line. The weekly update cycle moves the versions.
+
 ## License
 
 MIT
