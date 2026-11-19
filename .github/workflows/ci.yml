@@ -7,6 +7,26 @@ on:
     branches: [ main ]
 
 jobs:
+  checks:
+    name: Checks and linters
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4.4.0
+      with:
+        persist-credentials: false
+
+    - uses: teamniteo/gha-actions/nix@v45
+      with:
+        cache: niteo-public
+        auth_token: '${{ secrets.CACHIX_AUTH_TOKEN_PUBLIC }}'
+        nix_path: ''
+
+    - name: Run linting
+      run: nix-shell --run "make lint"
+      env:
+        GH_TOKEN: ${{ github.token }}
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -14,15 +34,15 @@ jobs:
         python-version: ['3.11', '3.12']
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4.4.0
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v5.6.0
       with:
         python-version: ${{ matrix.python-version }}
 
     - name: Install Poetry
-      uses: snok/install-poetry@v1
+      uses: snok/install-poetry@v1.4.2
       with:
         version: latest
         virtualenvs-create: true
@@ -32,7 +52,7 @@ jobs:
 
     - name: Load cached venv
       id: cached-poetry-dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v4.3.0
       with:
         path: .venv
         key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
@@ -46,6 +66,10 @@ jobs:
 
     - name: Run linting
       run: make lint
+      env:
+        SKIP: actions-lock
 
     - name: Run tests
       run: make tests
+      env:
+        SKIP: actions-lock
